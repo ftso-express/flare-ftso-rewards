@@ -3,30 +3,27 @@
 import os
 import yaml
 import json
-
 from web3 import Web3, HTTPProvider
 from web3.middleware import geth_poa_middleware
-
 import argparse
-
 from enum import Enum
-
-
 from rich import print
 from rich import box
 from rich.traceback import install
 from rich.panel import Panel
 from rich.pretty import pprint
-
+from rich.logging import RichHandler
+import pandas as pd
 from attributedict.collections import AttributeDict
-
 install(show_locals=False)
-
 from base_logger import log
-
+import logging
 from network.songbird import *
 from network.flare import *
+from tabulate import tabulate
+from utils import get_ftso_manager_address_from_price_submitter
 
+pdtabulate=lambda df:tabulate(df,headers='keys',tablefmt='psql', showindex=False)
 
 def init_argparse() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -67,7 +64,7 @@ SGB: 0x33ddae234e403789954cd792e1febdbe2466adc2
     parser.add_argument(
         '--verbose', '-v', action='count', 
         default=0,
-        help='Enable Logs Increase Verbosity, with -vvv'
+        help='Enable Logs Increase Verbosity, with -vv'
     )
 
     # parser.add_argument(
@@ -106,8 +103,6 @@ def get_total_ftso_rewards_balance(web3: Web3, _CONTRACT_FTSO_REWARD_MANAGER) ->
     _contract_total_ftso_reward_manager_balance = web3.fromWei(_contract_total_ftso_reward_manager_balance_wei,'ether')
     log.debug(f"FTSO Reward Manager Balance: {_contract_total_ftso_reward_manager_balance} [{_contract_total_ftso_reward_manager_balance_wei}]")
     return (_contract_total_ftso_reward_manager_balance_wei, _contract_total_ftso_reward_manager_balance)
-
-
 
 # function claim(address _rewardOwner, address payable _recipient, uint256 _rewardAmount, bool _wrap) external;
 # def claim_ftso_reward( web3: Web3, _ftso_account, _contract_ftso_reward_manager,
@@ -161,14 +156,34 @@ def main() -> None:
     parser = init_argparse()
     args = parser.parse_args()
 
-    log_levels = [ "WARNING", "INFO", "DEBUG" ]
+    log_levels = [ "INFO", "DEBUG" ]
+    log.propagate = False
 
-    if args.verbose:
-        log.propagate = True
+    if args.verbose:    
         if args.verbose <= len(log_levels):
             log.setLevel(log_levels[args.verbose-1])
+            for handler in log.handlers:
+                if isinstance(handler, logging.StreamHandler):
+                    handler.setLevel(log_levels[args.verbose-1])
+                    log.debug(f'Handler: {handler}')
+                if isinstance(handler, RichHandler):
+                    handler.setLevel(log_levels[args.verbose-1])
+                    log.debug(f'Handler: {handler}')
+                if isinstance(handler, logging.FileHandler):
+                    handler.setLevel(log_levels[args.verbose-1])
+                    log.debug(f'Handler: Level Set {handler}')
+                    
         else:
-            log.setLevel(len(log_levels)-1)
+            log.setLevel(logging.WARNING)
+            # log.setLevel(len(log_levels)-1)
+            # for handler in log.handlers:
+            #     # print(f"Handler: {handler}")
+            #     if isinstance(handler, logging.StreamHandler):
+            #         handler.setLevel(len(log_levels)-1)
+            #         log.info(f'Handler: {handler}')
+            #     if isinstance(handler, logging.FileHandler):
+            #         handler.setLevel(len(log_levels)-1)
+            #         log.info(f'Handler: {handler}')
 
     print(Panel.fit("[bold yellow]FTSO Express - FTSO Reward Checker/Claimer", border_style="blue", box=box.DOUBLE))
 
@@ -194,7 +209,6 @@ def main() -> None:
 
     FTSO_PRIVATE_KEY = os.getenv('FTSO_PRIVATE_KEY', NETWORK['ftso']['private_key'])
     log.debug(f"FTSO PRIVATE KEY LOADED")
-    
 
     CONTRACT_FTSO_REWARD_MANAGER=NETWORK['contracts']['ftso_reward_manager']
     log.debug(f"FTSO Reward Manager Address: {CONTRACT_FTSO_REWARD_MANAGER['address']}")
@@ -204,6 +218,10 @@ def main() -> None:
     CONTRACT_WNAT=NETWORK['contracts']['wnat']
     log.debug(f"WNAT Address: {CONTRACT_WNAT['address']}")
     log.debug(f"WNAT ABI: {CONTRACT_WNAT['abi']}")
+
+    CONTRACT_PRICE_SUBMITTER = NETWORK['contracts']['price_submitter']
+    log.debug(f"PRICE_SUBMITTER Address: {CONTRACT_PRICE_SUBMITTER['address']}")
+    log.debug(f"PRICE_SUBMITTER ABI: {CONTRACT_PRICE_SUBMITTER['abi']}")
     
     GAS_LIMIT = NETWORK['blockchain']['gas_limit']
     log.debug(f"GAS_LIMIT: {GAS_LIMIT}")
@@ -212,7 +230,8 @@ def main() -> None:
     REWARD_TO_CLAIM_RECIPIENT = NETWORK['rewards']['claim']['_recipient']
     # log.debug(f"REWARD_TO_CLAIM: {REWARD_TO_CLAIM}")
     log.debug(f"REWARD_TO_CLAIM_RECIPIENT: {REWARD_TO_CLAIM_RECIPIENT}")
-    
+
+    NUM_EPOCHS_IN_TABLE = NETWORK['settings']['output']['table_epoch_columns']
 
     if "FTSO_URL" in os.environ:
         web3 = Web3(HTTPProvider(os.getenv('FTSO_URL', FTSO_NODE_C_CHAIN_URL)))
@@ -244,11 +263,18 @@ def main() -> None:
         abi=CONTRACT_WNAT['abi']
     )
 
+    contract_price_submitter = web3.eth.contract(
+        address=CONTRACT_PRICE_SUBMITTER['address'], 
+        abi=CONTRACT_PRICE_SUBMITTER['abi']
+    )
+
+    # ftso_manager_address = get_ftso_manager_address_from_price_submitter(web3, contract_price_submitter)
     
     # Show Balance of FTSO
     _ftso_balance_wei, _ftso_balance = get_ftso_wallet_balance(web3, ftso_account)
     
-    match str(NETWORK['name'].upper()):
+    # match str(NETWORK['name'].upper()):
+    match NETWORK['name'].upper():
         case 'FLARE':
             log.debug('FLARE Matched')
             # Get the Amount in the FTSO Reward Manager - Check there is enough to claim.
@@ -257,10 +283,21 @@ def main() -> None:
                 log.exception("FTSO Reward Manager is Not Active - Please Investigate !")
             # Whats the Current Reward EPOCH
             _current_reward_epoch = get_flare_current_reward_epoch(web3, contract_ftso_reward_manager)
-            _claim_epoch_range = get_flare_claimable_reward_epoch_range(web3, contract_ftso_reward_manager)
+            print(Panel.fit(f"[bold green] Current Epoch: {_current_reward_epoch} ", border_style="green"))
+            _claim_epoch_range_min, _claim_epoch_range_max = get_flare_claimable_reward_epoch_range(web3, contract_ftso_reward_manager)
             _ftso_rewards_epochs_claimable = get_flare_rewards_epoch_for_rewards_unclaimed(web3, ftso_account, contract_ftso_reward_manager)
             # xa = get_flare_rewards_claimable_from_ftso_rewards_manager(web3, ftso_account, contract_ftso_reward_manager, int(_ftso_rewards_epochs_claimable))
             _ftso_rewards_claimable = get_flare_rewards_claimable_from_ftso_rewards_manager(web3, ftso_account, contract_ftso_reward_manager, CONTRACT_FTSO_REWARD_MANAGER, _ftso_rewards_epochs_claimable)
+
+            # _state_of_rewards = get_state_of_rewards(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch + 1, _claim_epoch_range_min)
+            _state_of_rewards = get_state_of_rewards_flare(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch, _current_reward_epoch - NUM_EPOCHS_IN_TABLE)
+            df = pd.DataFrame(_state_of_rewards)
+            # pprint(df)
+            print(pdtabulate(df))
+            
+            # _state_of_rewards = get_state_of_rewards(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch + 1, _current_reward_epoch)
+            # pprint(_state_of_rewards)
+            # print(pdtabulate(_state_of_rewards))
 
             if args.claim:
                 if len(_ftso_rewards_epochs_claimable):
@@ -283,9 +320,20 @@ def main() -> None:
             _contract_ftso_reward_manager_balance_wei, _contract_ftso_reward_manager_balance = get_total_ftso_rewards_balance(web3, CONTRACT_FTSO_REWARD_MANAGER)
             # Whats the Current Reward EPOCH
             _current_reward_epoch = get_songbird_current_reward_epoch(web3, contract_ftso_reward_manager)
+            print(Panel.fit(f"[bold blue] Current Reward Epoch: {_current_reward_epoch} ", border_style="bold yellow"))
             _claim_epoch_range = get_songbird_claimable_reward_epoch_range(web3, contract_ftso_reward_manager)
             _ftso_rewards_epochs_claimable = get_songbird_pricing_epoch_for_rewards_unclaimed(web3, ftso_account, contract_ftso_reward_manager)
             _ftso_rewards_claimable = get_songbird_rewards_claimable_from_ftso_rewards_manager(web3, ftso_account, contract_ftso_reward_manager, CONTRACT_FTSO_REWARD_MANAGER, _ftso_rewards_epochs_claimable)
+
+            # _state_of_rewards = get_state_of_rewards(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch + 1, _claim_epoch_range_min)
+            _state_of_rewards = get_state_of_rewards_songbird(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch, _current_reward_epoch - NUM_EPOCHS_IN_TABLE)
+            df = pd.DataFrame(_state_of_rewards)
+            # pprint(df)
+            print(pdtabulate(df))
+            
+            # _state_of_rewards = get_state_of_rewards(web3, ftso_account, contract_ftso_reward_manager, _current_reward_epoch + 1, _current_reward_epoch)
+            # pprint(_state_of_rewards)
+            # print(pdtabulate(_state_of_rewards))
 
             if args.claim:
                 # get_songbird_wallet_balances_wsgb(web3, ftso_account, contract_wnat, CONTRACT_WNAT, _ftso_rewards_epochs_claimable)
@@ -303,12 +351,11 @@ def main() -> None:
                     log.debug(f"Wallet Recipient: {wallet_recipient}")
                     try:
                         tx = execute_reward_claim_songbird(web3, ftso_account, FTSO_PRIVATE_KEY, contract_ftso_reward_manager, wallet_recipient, _ftso_rewards_epochs_claimable.pop(), GAS_LIMIT, GAS_PRICE)
+                        # log.info(f"REWARDS CLAIM TEST")
                     except Exception as err:
                         exit(1)
-                
                 else:
                     log.info(f"No Rewards Claimable")
-
         case _:
             log.exception('NETWORK NOT RECOGNISED')
 

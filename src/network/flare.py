@@ -1,6 +1,10 @@
 from web3 import Web3
+import numpy as np
+
 
 from base_logger import log
+
+log.propagate = False
 
 def is_contract_ftso_reward_manager_active(web3: Web3, _contract_ftso_reward_manager) -> bool:
     _is_contract_active = _contract_ftso_reward_manager.functions.active().call()
@@ -27,22 +31,22 @@ def get_flare_rewards_epoch_for_rewards_unclaimed(web3: Web3, _ftso_account, _co
     log.debug(f"FTSO Unclaimed Rewards Balance [{_ftso_account.address}]: {_unclaimed_ftso_reward_epochs}")
     return _unclaimed_ftso_reward_epochs
 
-def get_flare_rewards_claimable_from_ftso_rewards_manager(web3: Web3, _ftso_account, _contract_ftso_reward_manager, _reward_epoch: int):
-    # _unclaimed_ftso_rewards_wei, _weight = _contract_ftso_reward_manager.functions. getStateOfRewards(_ftso_account.address, _reward_epoch).call()
-    _ = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address, _reward_epoch).call()
-    pprint(_)
-    # log.debug(f"FTSO Unclaimed Rewards [{_ftso_account.address}]: {_unclaimed_ftso_rewards_wei}")
-    # log.debug(f"FTSO Unclaimed Rewards Weight [{_ftso_account.address}]: {_weight}")
-    # try:
-    #     _totalReward_wei, _claimedReward_wei = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address).call()
-    #     _totalReward = web3.fromWei(_totalReward_wei ,'ether')
-    #     _claimedReward = web3.fromWei(_claimedReward_wei ,'ether')
-    # except Exception as e:
-    #     log.exception(f"Help: {e}")
-    # log.info(f"Validator Rewards Total   [FLARE] : {_totalReward}")
-    # log.info(f"Validator Rewards Claimed [FLARE] : {_claimedReward}")
-    # return contract_ftso_reward_manager_balance
-    return None
+# def get_flare_rewards_claimable_from_ftso_rewards_manager(web3: Web3, _ftso_account, _contract_ftso_reward_manager, _reward_epoch: int):
+#     # _unclaimed_ftso_rewards_wei, _weight = _contract_ftso_reward_manager.functions. getStateOfRewards(_ftso_account.address, _reward_epoch).call()
+#     _ = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address, _reward_epoch).call()
+#     pprint(_)
+#     # log.debug(f"FTSO Unclaimed Rewards [{_ftso_account.address}]: {_unclaimed_ftso_rewards_wei}")
+#     # log.debug(f"FTSO Unclaimed Rewards Weight [{_ftso_account.address}]: {_weight}")
+#     # try:
+#     #     _totalReward_wei, _claimedReward_wei = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address).call()
+#     #     _totalReward = web3.fromWei(_totalReward_wei ,'ether')
+#     #     _claimedReward = web3.fromWei(_claimedReward_wei ,'ether')
+#     # except Exception as e:
+#     #     log.exception(f"Help: {e}")
+#     # log.info(f"Validator Rewards Total   [FLARE] : {_totalReward}")
+#     # log.info(f"Validator Rewards Claimed [FLARE] : {_claimedReward}")
+#     # return contract_ftso_reward_manager_balance
+#     return None
 
 def get_flare_rewards_claimable_from_ftso_rewards_manager(web3: Web3, _ftso_account, _contract_ftso_reward_manager, _CONTRACT_FTSO_REWARD_MANAGER, _ftso_rewards_epochs_claimable):
     contract_ftso_reward_manager_balance = web3.fromWei(web3.eth.get_balance(_CONTRACT_FTSO_REWARD_MANAGER['address']),'ether')
@@ -68,6 +72,20 @@ def get_flare_rewards_claimable_from_ftso_rewards_manager(web3: Web3, _ftso_acco
     log.debug(f"FTSO Rewards Unclaimed Per Epoch: {_unclaimed_rewards_epoch_list}[{len(_unclaimed_rewards_epoch_list)}]")
 
     return _unclaimed_rewards_epoch_list
+
+def get_state_of_rewards_flare(web3: Web3, _ftso_account, _contract_ftso_reward_manager, _current_flare_reward_epoch, _claim_epoch_range_min):
+    state_of_rewards_list = {}
+    for x in range(_claim_epoch_range_min,_current_flare_reward_epoch):
+        _dataProviders, _rewardAmounts, _claimed, _claimable = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address,x).call()
+        state_of_rewards_list[f"epoch{x}"] = {
+            # 'Data_Providers': _dataProviders,
+            'Reward_Amounts_[WEI]': _rewardAmounts[0] if _rewardAmounts else np.NaN,
+            'Reward_Amounts_[FLR]': web3.fromWei(_rewardAmounts[0] if _rewardAmounts else np.NaN,  'ether'),
+            'Claimed': _claimed,
+            'Claimable': _claimable,
+        }
+    return state_of_rewards_list
+
 
 def execute_reward_claim_flare(web3: Web3, _ftso_account, _FTSO_PRIVATE_KEY, _contract_ftso_reward_manager, _wallet_to_reward, _ftso_rewards_epochs_to_claim, _GAS_LIMIT, _GAS_PRICE):
     log.warning(f"FTOS Private Key: {_ftso_account}")

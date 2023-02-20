@@ -1,6 +1,9 @@
 from web3 import Web3
+import numpy as np
 
 from base_logger import log
+
+log.propagate = False
 
 def get_songbird_wallet_balances_sgb(web3: Web3, _wallet_account):
         sgb_wallet_amount = web3.eth.get_balance(_wallet_account,)
@@ -51,6 +54,19 @@ def get_songbird_rewards_claimable_from_ftso_rewards_manager(web3: Web3, _ftso_a
     log.debug(f"FTSO Rewards Unclaimed Per Epoch: {_unclaimed_rewards_epoch_list}[{len(_unclaimed_rewards_epoch_list)}]")
 
     return _unclaimed_rewards_epoch_list
+
+def get_state_of_rewards_songbird(web3: Web3, _ftso_account, _contract_ftso_reward_manager, _current_songbird_reward_epoch, _claim_epoch_range_min):
+    state_of_rewards_list = {}
+    for x in range(_claim_epoch_range_min,_current_songbird_reward_epoch):
+        _dataProviders, _rewardAmounts, _claimed, _claimable = _contract_ftso_reward_manager.functions.getStateOfRewards(_ftso_account.address,x).call()
+        state_of_rewards_list[f"epoch{x}"] = {
+            # 'Data_Providers': _dataProviders,
+            'Reward_Amounts_[WEI]': _rewardAmounts[0] if _rewardAmounts else np.NaN,
+            'Reward_Amounts_[FLR]': web3.fromWei(_rewardAmounts[0] if _rewardAmounts else np.NaN,  'ether'),
+            'Claimed': _claimed,
+            'Claimable': _claimable,
+        }
+    return state_of_rewards_list
 
 def execute_reward_claim_songbird(web3: Web3, _ftso_account, _FTSO_PRIVATE_KEY, _contract_ftso_reward_manager, _wallet_to_reward, _ftso_rewards_epochs_to_claim, _GAS_LIMIT, _GAS_PRICE):
     log.warning(f"FTOS Private Key: {_ftso_account}")
